@@ -58,7 +58,7 @@ and each priority level will only dispatch as many concurrent requests as its
 configuration allows.
 
 The default configuration, for example, includes separate priority levels for
-leader-election requests, requests from built-in controllers, and requests from
+leader-election requests, requests from built-in {< glossary_tooltip text="controllers" term_id="controller" >}}, and requests from
 Pods. This means that an ill-behaved Pod that floods the API server with
 requests cannot prevent leader election or actions by the built-in controllers
 from succeeding.
