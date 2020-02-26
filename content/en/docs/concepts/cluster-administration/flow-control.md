@@ -7,7 +7,7 @@ min-kubernetes-server-version: v1.18
 {{% capture overview %}}
 
 Controlling the behavior of the Kubernetes API server in an overload situation
-is a key task for cluster administrators. The `kube-apiserver` has some controls
+is a key task for cluster administrators. The{{< glossary_tooltip term_id="kube-apiserver" text="kube-apiserver" >}} has some controls
 available (i.e. the `--max-requests-inflight` and
 `--max-mutating-requests-inflight` command-line flags) to limit the amount of
 outstanding work that will be accepted, preventing a flood of inbound requests
