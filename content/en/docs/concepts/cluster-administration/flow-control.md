@@ -1,5 +1,5 @@
 ---
-title: Manage API Server load with the Flow Control API
+title: API Server Flow Control
 content_template: templates/concept
 min-kubernetes-server-version: v1.18
 ---
@@ -35,12 +35,12 @@ to your `kube-apiserver` invocation:
 kube-apiserver \
 --feature-gates=APIPriorityAndFairness=true \
 --runtime-config=flowcontrol.apiserver.k8s.io/v1alpha1=true \
-(other flags as usual)
+ # …and other flags as usual
 ```
 
 ## Concepts
 There are several distinct features involved in the flow control API. Incoming
-requests are classified by attributes of the request using FlowSchemas, and
+requests are classified by attributes of the request using _FlowSchemas_, and
 assigned to priority levels. Priority levels add a degree of isolation by
 maintaining separate concurrency limits, so that requests assigned to different
 priority levels cannot starve each other. Within a priority level, a
