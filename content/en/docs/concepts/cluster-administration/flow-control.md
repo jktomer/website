@@ -28,7 +28,7 @@ need be dropped.
 
 The Flow Control API is part of the API Priority and Fairness
 [feature](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md),
-which is presently in alpha. To enable it, add the following command-line flags
+which is not enabled by default. To enable it, add the following command-line flags
 to your `kube-apiserver` invocation:
 
 ```shell
