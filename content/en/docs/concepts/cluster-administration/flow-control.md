@@ -163,8 +163,7 @@ mutating and non-mutating verbs respectively.
 {{< /caution >}}
 {{< caution >}}
 In the present implementation, requests classified as "long-running" — primarily
-watches — are not subject to the API Priority and Fairness filter at all. This
-is expected to change.
+watches — are not subject to the API Priority and Fairness filter at all.
 {{< /caution >}}
 
 When the volume of inbound requests assigned to a single
@@ -246,8 +245,8 @@ to get a mapping of UIDs to names for both FlowSchemas and
 PriorityLevelConfigurations.
 
 ## Observability
-The API Priority and Fairness feature, when enabled, causes several new metrics
-to be exported. Monitoring these can help you determine whether your
+When you enable the API Priority and Fairness feature, the kube-apiserver
+exports additional metrics. Monitoring these can help you determine whether your
 configuration is inappropriately throttling important traffic, or find
 poorly-behaved workloads that may be harming system health.
 
@@ -301,12 +300,9 @@ poorly-behaved workloads that may be harming system health.
 
 {{% capture whatsnext %}}
 
-This feature is still in alpha. Its design and future plans can be found in the [relevant
-KEP](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md).
-Feature requests and suggestions for improvements may be made to the [API
-Machinery SIG](https://github.com/kubernetes/community/tree/master/sig-api-machinery).
-
-Current plans include flow control for long-running requests (watches) and
-improved observability features (particularly logging and tracing).
+For background information on design details for API priority and fairness, see
+the [enhancement proposal](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md).
+You can make suggestions and feature requests via [SIG API
+Machinery](https://github.com/kubernetes/community/tree/master/sig-api-machinery).
 
 {{% /capture %}}
