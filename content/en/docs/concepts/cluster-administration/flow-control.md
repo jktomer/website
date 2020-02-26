@@ -24,7 +24,7 @@ need be dropped.
 
 ## Enabling the Flow Control API
 
-{{< feature-state state="alpha" >}}
+{{< feature-state state="alpha"  for_k8s_version="v1.18" >}}
 
 The Flow Control API is part of the API Priority and Fairness
 [feature](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md),
