@@ -1,5 +1,5 @@
 ---
-title: API Server Flow Control
+title: API Priority and Fairness
 content_template: templates/concept
 min-kubernetes-server-version: v1.18
 ---
@@ -7,29 +7,42 @@ min-kubernetes-server-version: v1.18
 {{% capture overview %}}
 
 Controlling the behavior of the Kubernetes API server in an overload situation
-is a key task for cluster administrators. The{{< glossary_tooltip term_id="kube-apiserver" text="kube-apiserver" >}} has some controls
-available (i.e. the `--max-requests-inflight` and
-`--max-mutating-requests-inflight` command-line flags) to limit the amount of
-outstanding work that will be accepted, preventing a flood of inbound requests
-from overloading and potentially crashing the API server, but beyond that, the
-Priority and Fairness (or flow-control) API provides a configurable mechanism to
+is a key task for cluster administrators. The {{< glossary_tooltip
+term_id="kube-apiserver" text="kube-apiserver" >}} has some controls available
+(i.e. the `--max-requests-inflight` and `--max-mutating-requests-inflight`
+command-line flags) to limit the amount of outstanding work that will be
+accepted, preventing a flood of inbound requests from overloading and
+potentially crashing the API server, but these flags are not enough to ensure
+that the most important requests get through in a period of high traffic.
+
+The API Priority and Fairness feature provides a configurable mechanism to
 ensure that in a high-load situation, forward progress will be made on the right
 requests. It also allows for a limited amount of queuing, so that in the event
 of _bursty_ traffic that remains below acceptable levels on average, no requests
-need be dropped.
+need be dropped, and uses a fair queuing algorithm to prevent one stream of
+requests (for example, a poorly-behaved {{< glossary_tooltip
+text="controller" term_id="controller" >}}) from starving others, even
+at the same priority level.
+
+{{< caution >}}
+In the present implementation, requests classified as "long-running" — primarily
+watches — are not subject to the API Priority and Fairness filter. This is also
+true for the `--max-requests-inflight` flag without the API Priority and
+Fairness feature enabled.
+{{< /caution >}}
 
 {{% /capture %}}
 
 {{% capture body %}}
 
-## Enabling the Flow Control API
+## Enabling API Priority and Fairness
 
 {{< feature-state state="alpha"  for_k8s_version="v1.18" >}}
 
-The Flow Control API is part of the API Priority and Fairness
-[feature](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md),
-which is not enabled by default. To enable it, add the following command-line flags
-to your `kube-apiserver` invocation:
+The API Priority and Fairness
+[feature](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md)
+is not enabled by default. To enable it, add the following command-line flags to
+your `kube-apiserver` invocation:
 
 ```shell
 kube-apiserver \
@@ -38,43 +51,51 @@ kube-apiserver \
  # …and other flags as usual
 ```
 
+The command-line flag `--enable-priority-and-fairness=false` will disable the
+API Priority and Fairness feature, even if other flags have enabled it.
+
 ## Concepts
-There are several distinct features involved in the flow control API. Incoming
-requests are classified by attributes of the request using _FlowSchemas_, and
-assigned to priority levels. Priority levels add a degree of isolation by
-maintaining separate concurrency limits, so that requests assigned to different
-priority levels cannot starve each other. Within a priority level, a
-fair-queuing algorithm prevents requests from different sources from starving
+There are several distinct features involved in the API Priority and Fairness
+feature. Incoming requests are classified by attributes of the request using
+_FlowSchemas_, and assigned to priority levels. Priority levels add a degree of
+isolation by maintaining separate concurrency limits, so that requests assigned
+to different priority levels cannot starve each other. Within a priority level,
+a fair-queuing algorithm prevents requests from different _flows_ from starving
 each other, and allows for requests to be queued to prevent bursty traffic from
 causing failed requests when the average load is acceptably low.
 
 ### Priority Levels
-Without the Priority and Fairness feature enabled, overall concurrency in the
-API server is limited by the `kube-apiserver` flags `--max-requests-inflight`
-and `--max-mutating-requests-inflight`. With the feature enbaled, the
-concurrency limit defined by these flags is divided up among a configurable set
-of _priority levels_. Incoming requests are assigned to a single priority level,
-and each priority level will only dispatch as many concurrent requests as its
-configuration allows.
+Without the API Priority and Fairness feature enabled, overall concurrency in
+the API server is limited by the `kube-apiserver` flags
+`--max-requests-inflight` and `--max-mutating-requests-inflight`. With the
+feature enbaled, the concurrency limit defined by these flags is divided up
+among a configurable set of _priority levels_. Each incoming request is assigned
+to a single priority level, and each priority level will only dispatch as many
+concurrent requests as its configuration allows.
 
 The default configuration, for example, includes separate priority levels for
-leader-election requests, requests from built-in {< glossary_tooltip text="controllers" term_id="controller" >}}, and requests from
+leader-election requests, requests from built-in controllers, and requests from
 Pods. This means that an ill-behaved Pod that floods the API server with
 requests cannot prevent leader election or actions by the built-in controllers
 from succeeding.
 
 ### Fair Queuing
 Even within a priority level there may be a large number of distinct sources of
-traffic. In an overload situation, it is valuable to prevent one consumer from
-starving the others. This is handled by use of a fair-queuing algorithm to
-process requests that are assigned the same priority level. Each request is
-given a _flow distinguisher_ — in the current design, this is either the
-requesting user or the resource's namespace — and the system attempts to give
-approximately equal weight to requests with different flow distinguishers.
+traffic. In an overload situation, it is valuable to prevent one stream of
+requests from starving others (in particular, in the relatively common case of a
+single buggy client flooding the kube-apiserver with requests, that buggy client
+would ideally not have much measurable impact on other clients at all). This is
+handled by use of a fair-queuing algorithm to process requests that are assigned
+the same priority level. Each request is assigned to a _flow_, consisting of the
+name of the matching FlowSchema plus a _flow distinguisher_ — in the current
+design, this is either the requesting user or the resource's namespace — and the
+system attempts to give approximately equal weight to requests in different
+flows.
 
 The details of the queuing algorithm are tunable for each priority level, and
-allow administrators to trade off memory use against fairness and tolerance for
-bursty traffic.
+allow administrators to trade off memory use, fairness (the property that
+independent flows will all make progress when total traffic exceeds capacity),
+tolerance for bursty traffic, and the added latency induced by queuing.
 
 ### Exempt requests
 Some requests are considered sufficiently important that they are not subject to
@@ -83,9 +104,11 @@ improperly-configured flow control configuration from totally disabling an API
 server.
 
 ## Defaults
-The Priority and Fairness feature ships with a default configuration that the
-authors hope will work well for most clusters. It groups requests into five
-priority classes:
+The Priority and Fairness feature ships with a suggested configuration that
+should suffice for experimentation; administrators of clusters likely to
+experience heavy load should consider what configuration will work best for
+their system. The suggested configuration groups requests into five priority
+classes:
 
 * The `system` priority level is for requests from the `system:nodes` group,
   i.e. Kubelets, which must be able to contact the API server in order for
@@ -141,8 +164,7 @@ PriorityLevelConfiguration.
 ### PriorityLevelConfiguration
 A PriorityLevelConfiguration represents a single isolation class. Each
 PriorityLevelConfiguration has an independent limit on the number of outstanding
-requests, and limitations on the number of queued requests. An example
-PriorityLevelConfiguration looks like this:
+requests, and limitations on the number of queued requests.
 
 Concurrency limits for PriorityLevelConfigurations are not specified in absolute
 number of requests, but rather in "concurrency shares." The total concurrency
@@ -161,10 +183,6 @@ between mutating and non-mutating requests; if you want to treat them
 separately for a given resource, make separate FlowSchemas that match the
 mutating and non-mutating verbs respectively.
 {{< /caution >}}
-{{< caution >}}
-In the present implementation, requests classified as "long-running" — primarily
-watches — are not subject to the API Priority and Fairness filter at all.
-{{< /caution >}}
 
 When the volume of inbound requests assigned to a single
 PriorityLevelConfiguration is more than its permitted concurrency level, the
@@ -175,9 +193,8 @@ above the threshhold will be queued, and the fair queuing algorithm will be used
 to balance progress between requests based on their assigned flow distinguisher.
 
 The queuing configuration allows tuning the fair queuing algorithm for a
-priority level. Details of the algorithm can be read in the
-[KEP](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md),
-but in short:
+priority level. Details of the algorithm can be read in the [enhancement
+proposal](#what-s-next), but in short:
 
 * Increasing `queues` reduces the rate of collisions between different flows, at
   the cost of increased memory usage. A value of 1 here effectively disables the
@@ -188,45 +205,52 @@ but in short:
 
 * Changing `handSize` allows you to adjust the probability of collisions between
   different flows and the overall concurrency available to a single flow in an
-  overload situation, traded off against resource consumption. 
+  overload situation, traded off against resource consumption and the amount of
+  queuing latency that a single flow can impose upon the system.
     {{< note >}}
-    The probability that two flows with different flow distinguishers
-    can starve each other of resources is `1 / choose(queues, handSize)`. The choice
-    of `handSize` that minimizes this probability is therefore `Queues / 2`. However,
-    much smaller values of `handSize` will in practice make such collisions very
-    unlikely while consuming less resources. A larger `handSize` also increases the
-    effective concurrency share available to a single flow in an overload situation.
+    A larger `handSize` makes it less likely for two individual flows to collide
+    (and therefore for one to be able to starve the other), but more likely that
+    a small number of flows can dominate the apiserver. A larger `handSize` also
+    potentially increases the amount of latency that a single high-traffic flow
+    can add to the system. The maximum number of queued requests possible from a
+    single flow is `handSize * queueLengthLimit`. A good initial value is 1/8
+    the number of `queues`.
     {{< /note >}}
 
 ### FlowSchema
 A FlowSchema matches some inbound requests and assigns them to a
-PriorityLevelConfiguration. Every inbound request is matched against every
-FlowSchema in turn, starting with those with highest `MatchingPrecedence` and
+priority level. Every inbound request is matched against every
+FlowSchema in turn, starting with those with highest `matchingPrecedence` and
 working down. 
 
 {{< caution >}}
-Only the first matching FlowSchema for a given request matters.
-If multiple FlowSchemas match a single inbound request, it will be assigned
-based on the one with the highest `MatchingPrecedence`.
+Only the first matching FlowSchema for a given request matters. If multiple
+FlowSchemas match a single inbound request, it will be assigned based on the one
+with the highest `matchingPrecedence`. If multiple FlowSchemas with equal
+`matchingPrecedence` match the same request, the one with lexicographically
+smaller `name` will win, but it's better not to rely on this, and instead to
+ensure that no two FlowSchemas have the same `matchingPrecedence`.
 {{< /caution >}}
 
 A FlowSchema matches a given request if at least one of its `rules`
 matches. A rule matches if at least one of its `subjects` *and* at least
 one of its `resourceRules` or `nonResourceRules` (depending on whether the
-incoming request is for a resource or non-resource URL) matches. 
+incoming request is for a resource or non-resource URL) matches the request.
 
 For the `name` field in subjects, and the `verbs`, `apiGroups`, `resources`,
 `namespaces`, and `nonResourceURLs` fields of resource and non-resource rules,
-the wildcard `*` may be specified to match all of the appropriate object,
+the wildcard `*` may be specified to match all values for the given field,
 effectively removing it from consideration.
 
-A FlowSchema's `flowDistinguisherMethod` determines how requests matching that
+A FlowSchema's `distinguisherMethod.type` determines how requests matching that
 schema will be separated into flows for the fair queuing algorithm. It may be
 either `ByUser`, in which case one requesting user will not be able to starve
 other users of capacity, or `ByNamespace`, in which case requests for resources
 in one namespace will not be able to starve requests for resources in other
-namespaces of capacity. The correct choice for a given FlowSchema depends on the
-resource and your particular environment.
+namespaces of capacity, or it may be blank (or `distinguisherMethod` may be
+omitted entirely), in which case all requests matched by this FlowSchema will be
+considered part of a single flow. The correct choice for a given FlowSchema
+depends on the resource and your particular environment.
 
 ## Diagnostics
 Every HTTP response from an API server with the priority and fairness feature
