@@ -6,6 +6,8 @@ min-kubernetes-server-version: v1.18
 
 {{% capture overview %}}
 
+{{< feature-state state="alpha"  for_k8s_version="v1.18" >}}
+
 Controlling the behavior of the Kubernetes API server in an overload situation
 is a key task for cluster administrators. The {{< glossary_tooltip
 term_id="kube-apiserver" text="kube-apiserver" >}} has some controls available
@@ -25,9 +27,9 @@ glossary_tooltip text="controller" term_id="controller" >}}) need not
 starve others (even at the same priority level).
 
 {{< caution >}}
-In the present implementation, requests classified as "long-running" — primarily
-watches — are not subject to the API Priority and Fairness filter. This is also
-true for the `--max-requests-inflight` flag without the API Priority and
+Requests classified as "long-running" — primarily watches — are not
+subject to the API Priority and Fairness filter. This is also true for
+the `--max-requests-inflight` flag without the API Priority and
 Fairness feature enabled.
 {{< /caution >}}
 
@@ -37,12 +39,15 @@ Fairness feature enabled.
 
 ## Enabling API Priority and Fairness
 
-{{< feature-state state="alpha"  for_k8s_version="v1.18" >}}
-
-The API Priority and Fairness
-[feature](https://github.com/kubernetes/enhancements/blob/master/keps/sig-api-machinery/20190228-priority-and-fairness.md)
-is not enabled by default. To enable it, add the following command-line flags to
-your `kube-apiserver` invocation:
+The API Priority and Fairness feature is controlled by a feature gate
+and is not enabled by default.  See
+[Feature Gates](/docs/reference/command-line-tools-reference/feature-gates/)
+for a general explanation of enabling or disabling feature gates.  The
+name of the relevant feature gate is "APIPriorityAndFairness".  This
+feature involves a new {{< glossary_tooltip term_id="api-group"
+text="API Group" >}} that must also be enabled.  You cam do these
+things by adding the following command-line flags to your
+`kube-apiserver` invocation:
 
 ```shell
 kube-apiserver \
@@ -68,7 +73,7 @@ causing failed requests when the average load is acceptably low.
 Without the API Priority and Fairness feature enabled, overall concurrency in
 the API server is limited by the `kube-apiserver` flags
 `--max-requests-inflight` and `--max-mutating-requests-inflight`. With the
-feature enbaled, the concurrency limits defined by these flags are summed and then divided up
+feature enabled, the concurrency limits defined by these flags are summed and then divided up
 among a configurable set of _priority levels_. Each incoming request is assigned
 to a single priority level, and each priority level will only dispatch as many
 concurrent requests as its configuration allows.
@@ -87,15 +92,16 @@ single buggy client flooding the kube-apiserver with requests, that buggy client
 would ideally not have much measurable impact on other clients at all). This is
 handled by use of a fair-queuing algorithm to process requests that are assigned
 the same priority level. Each request is assigned to a _flow_, identified by the
-name of the matching FlowSchema plus a _flow distinguisher_ — in the current
-design, this is either the requesting user or the target resource's namespace — and the
+name of the matching FlowSchema plus a _flow distinguisher_ — which
+is either the requesting user, the target resource's namespace, or nothing — and the
 system attempts to give approximately equal weight to requests in different
 flows of the same priority level.
 
 After classifying a request into a flow, the API Priority and Fairness
 feature then may assign the request to a queue.  This assignment uses
-a technique known as _shuffle sharding_, and it makes relatively
-efficient use of queues to insulate light flows from heavy flows.
+a technique known as {{< glossary_tooltip term_id="shuffle-sharding"
+text="shuffle sharding" >}}, which makes relatively efficient use of
+queues to insulate light flows from heavy flows.
 
 The details of the queuing algorithm are tunable for each priority level, and
 allow administrators to trade off memory use, fairness (the property that
@@ -104,15 +110,14 @@ tolerance for bursty traffic, and the added latency induced by queuing.
 
 ### Exempt requests
 Some requests are considered sufficiently important that they are not subject to
-any of the limitations imposed by this feature. This prevents an
+any of the limitations imposed by this feature. These exemptions prevent an
 improperly-configured flow control configuration from totally disabling an API
 server.
 
 ## Defaults
 The Priority and Fairness feature ships with a suggested configuration that
-should suffice for experimentation; administrators of clusters likely to
-experience heavy load should consider what configuration will work best for
-their system. The suggested configuration groups requests into five priority
+should suffice for experimentation; if your cluster is likely to
+experience heavy load then you should consider what configuration will work best. The suggested configuration groups requests into five priority
 classes:
 
 * The `system` priority level is for requests from the `system:nodes` group,
@@ -194,7 +199,7 @@ PriorityLevelConfiguration is more than its permitted concurrency level, the
 `type` field of its specification determines what will happen to extra requests.
 A type of `Reject` means that excess traffic will immediately be rejected with
 an HTTP 429 (Too Many Requests) error. A type of `Queue` means that requests
-above the threshhold will be queued, and the shuffle sharding and fair queuing algorithms will be used
+above the threshold will be queued, with the shuffle sharding and fair queuing techniques used
 to balance progress between requests based on their assigned flow distinguisher.
 
 The queuing configuration allows tuning the fair queuing algorithm for a
@@ -224,13 +229,14 @@ proposal](#what-s-next), but in short:
 
 
 Following is a table showing an interesting collection of shuffle
-sharding configurations, printing for each the probability that a
-given mouse (light flow) is squished by an elephant (heavy flow) for
+sharding configurations, showing for each the probability that a
+given mouse (light flow) is squished by the elephants (heavy flows) for
 an illustrative collection of numbers of elephants. See
 https://play.golang.org/p/Gi0PLgVHiUg , which computes this table; the
 later entries are of theoretical interest only.
 
-|HandSize|   DeckSize|	1 elephant|		4 elephants|		16 elephants|
+{{< table caption="Example Shuffle Sharding Configurations" >}}
+|HandSize|     Queues|	1 elephant|		4 elephants|		16 elephants|
 |--------|-----------|------------|----------------|--------------------|
 |      12|         32|	4.428838398950118e-09|	0.11431348830099144|	0.9935089607656024|
 |      10|         32|	1.550093439632541e-08|	0.0626479840223545|	0.9753101519027554|
@@ -287,8 +293,8 @@ depends on the resource and your particular environment.
 
 ## Diagnostics
 Every HTTP response from an API server with the priority and fairness feature
-enabled will have two new headers, `X-Kubernetes-PF-FlowSchemaUID` and
-`X-Kubernetes-PF-PriorityLevelUID`, noting the flow schema that matched the request
+enabled has two extra headers: `X-Kubernetes-PF-FlowSchema-UID` and
+`X-Kubernetes-PF-PriorityLevel-UID`, noting the flow schema that matched the request
 and the priority level to which it was assigned, respectively. The API objects'
 names are not included in these headers in case the requesting user does not
 have permission to view them, so when debugging you can use a command like 
