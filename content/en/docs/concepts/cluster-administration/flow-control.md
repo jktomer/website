@@ -17,8 +17,8 @@ accepted, preventing a flood of inbound requests from overloading and
 potentially crashing the API server, but these flags are not enough to ensure
 that the most important requests get through in a period of high traffic.
 
-The API Priority and Fairness feature is an alternative to the
-aforementioned max-inflight limitations.  This new feature classifies
+The API Priority and Fairness feature (APF) is an alternative that improves upon
+aforementioned max-inflight limitations.  APF classifies
 and isolates requests in a more fine-grained way.  It also introduces
 a limited amount of queuing, so that no requests are rejected in cases
 of very brief bursts.  Requests are dispatched from queues using a
@@ -42,10 +42,10 @@ Fairness feature enabled.
 The API Priority and Fairness feature is controlled by a feature gate
 and is not enabled by default.  See
 [Feature Gates](/docs/reference/command-line-tools-reference/feature-gates/)
-for a general explanation of enabling or disabling feature gates.  The
-name of the relevant feature gate is "APIPriorityAndFairness".  This
-feature involves a new {{< glossary_tooltip term_id="api-group"
-text="API Group" >}} that must also be enabled.  You cam do these
+for a general explanation of feature gates and how to enable and disable them.  The
+name of the feature gate for APF is "APIPriorityAndFairness".  This
+feature also involves an {{< glossary_tooltip term_id="api-group"
+text="API Group" >}} that must be enabled.  You can do these
 things by adding the following command-line flags to your
 `kube-apiserver` invocation:
 
@@ -70,10 +70,10 @@ each other, and allows for requests to be queued to prevent bursty traffic from
 causing failed requests when the average load is acceptably low.
 
 ### Priority Levels
-Without the API Priority and Fairness feature enabled, overall concurrency in
+Without APF enabled, overall concurrency in
 the API server is limited by the `kube-apiserver` flags
-`--max-requests-inflight` and `--max-mutating-requests-inflight`. With the
-feature enabled, the concurrency limits defined by these flags are summed and then divided up
+`--max-requests-inflight` and `--max-mutating-requests-inflight`. With APF
+enabled, the concurrency limits defined by these flags are summed and then the sum is divided up
 among a configurable set of _priority levels_. Each incoming request is assigned
 to a single priority level, and each priority level will only dispatch as many
 concurrent requests as its configuration allows.
@@ -101,7 +101,7 @@ After classifying a request into a flow, the API Priority and Fairness
 feature then may assign the request to a queue.  This assignment uses
 a technique known as {{< glossary_tooltip term_id="shuffle-sharding"
 text="shuffle sharding" >}}, which makes relatively efficient use of
-queues to insulate light flows from heavy flows.
+queues to insulate low-intensity flows from high-intensity flows.
 
 The details of the queuing algorithm are tunable for each priority level, and
 allow administrators to trade off memory use, fairness (the property that
@@ -200,7 +200,7 @@ PriorityLevelConfiguration is more than its permitted concurrency level, the
 A type of `Reject` means that excess traffic will immediately be rejected with
 an HTTP 429 (Too Many Requests) error. A type of `Queue` means that requests
 above the threshold will be queued, with the shuffle sharding and fair queuing techniques used
-to balance progress between requests based on their assigned flow distinguisher.
+to balance progress between request flows.
 
 The queuing configuration allows tuning the fair queuing algorithm for a
 priority level. Details of the algorithm can be read in the [enhancement
@@ -216,24 +216,22 @@ proposal](#what-s-next), but in short:
 
 * Changing `handSize` allows you to adjust the probability of collisions between
   different flows and the overall concurrency available to a single flow in an
-  overload situation, traded off against resource consumption and the amount of
-  queuing latency that a single flow can impose upon the system.
+  overload situation.
     {{< note >}}
     A larger `handSize` makes it less likely for two individual flows to collide
     (and therefore for one to be able to starve the other), but more likely that
     a small number of flows can dominate the apiserver. A larger `handSize` also
     potentially increases the amount of latency that a single high-traffic flow
-    can add to the system. The maximum number of queued requests possible from a
+    can cause. The maximum number of queued requests possible from a
     single flow is `handSize * queueLengthLimit`.
     {{< /note >}}
 
 
 Following is a table showing an interesting collection of shuffle
 sharding configurations, showing for each the probability that a
-given mouse (light flow) is squished by the elephants (heavy flows) for
+given mouse (low-intensity flow) is squished by the elephants (high-intensity flows) for
 an illustrative collection of numbers of elephants. See
-https://play.golang.org/p/Gi0PLgVHiUg , which computes this table; the
-later entries are of theoretical interest only.
+https://play.golang.org/p/Gi0PLgVHiUg , which computes this table.
 
 {{< table caption="Example Shuffle Sharding Configurations" >}}
 |HandSize|     Queues|	1 elephant|		4 elephants|		16 elephants|
@@ -249,10 +247,6 @@ later entries are of theoretical interest only.
 |       6|        256|	2.7134626662687968e-12|	2.9516464018476436e-07|	0.0008895654642000348|
 |       6|        512|	4.116062922897309e-14|	4.982983350480894e-09|	2.26025764343413e-05|
 |       6|       1024|	6.337324016514285e-16|	8.09060164312957e-11|	4.517408062903668e-07|
-|       5|       2048|	3.346983858565059e-15|	5.09492182152851e-11|	7.343194705042154e-08|
-|       4|      32768|	2.0820493844713724e-17|	3.786555380815453e-14|	1.3180488818789268e-11|
-|       3|    1048576|	5.2041853172145794e-18|	1.1449060294670304e-15|	9.000579512620038e-14|
-|       2| 1073741824|	1.7347234775923942e-18|	4.85722571011684e-17|	8.604228208458914e-16|
 
 ### FlowSchema
 
